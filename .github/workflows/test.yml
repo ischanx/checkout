@@ -96,6 +96,7 @@ jobs:
       - name: Checkout with fetch-tags
         uses: ./
         with:
+          repository: actions/checkout
           ref: test-data/v2/basic
           path: fetch-tags-test
           fetch-tags: true
@@ -354,6 +355,7 @@ jobs:
         id: checkout
         uses: ./actions-checkout
         with:
+          repository: actions/checkout
           path: cloned-using-local-action
           ref: test-data/v2/basic
 
