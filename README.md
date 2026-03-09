@@ -1,6 +1,22 @@
 [![Build and Test](https://github.com/actions/checkout/actions/workflows/test.yml/badge.svg)](https://github.com/actions/checkout/actions/workflows/test.yml)
 
-# Checkout V4
+# Checkout v6
+
+## What's new
+
+- Improved credential security: `persist-credentials` now stores credentials in a separate file under `$RUNNER_TEMP` instead of directly in `.git/config`
+- No workflow changes required — `git fetch`, `git push`, etc. continue to work automatically
+- Running authenticated git commands from a [Docker container action](https://docs.github.com/actions/sharing-automations/creating-actions/creating-a-docker-container-action) requires Actions Runner [v2.329.0](https://github.com/actions/runner/releases/tag/v2.329.0) or later
+
+# Checkout v5
+
+## What's new
+
+- Updated to the node24 runtime
+  - This requires a minimum Actions Runner version of [v2.327.1](https://github.com/actions/runner/releases/tag/v2.327.1) to run.
+
+
+# Checkout v4
 
 This action checks-out your repository under `$GITHUB_WORKSPACE`, so your workflow can access it.
 
@@ -10,6 +26,24 @@ The auth token is persisted in the local git config. This enables your scripts t
 
 When Git 2.18 or higher is not in your PATH, falls back to the REST API to download the files.
 
+### Note
+
+Thank you for your interest in this GitHub action, however, right now we are not taking contributions. 
+
+We continue to focus our resources on strategic areas that help our customers be successful while making developers' lives easier. While GitHub Actions remains a key part of this vision, we are allocating resources towards other areas of Actions and are not taking contributions to this repository at this time. The GitHub public roadmap is the best place to follow along for any updates on features we’re working on and what stage they’re in.
+
+We are taking the following steps to better direct requests related to GitHub Actions, including:
+
+1. We will be directing questions and support requests to our [Community Discussions area](https://github.com/orgs/community/discussions/categories/actions)
+
+2. High Priority bugs can be reported through Community Discussions or you can report these to our support team https://support.github.com/contact/bug-report.
+
+3. Security Issues should be handled as per our [security.md](security.md)
+
+We will still provide security updates for this project and fix major breaking changes during this time.
+
+You are welcome to still raise bugs in this repo.
+
 # What's new
 
 Please refer to the [release page](https://github.com/actions/checkout/releases/latest) for the latest release notes.
@@ -18,7 +52,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 
 <!-- start usage -->
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v6
   with:
     # Repository name with owner. For example, actions/checkout
     # Default: ${{ github.repository }}
@@ -132,23 +166,33 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 
 # Scenarios
 
-- [Fetch only the root files](#Fetch-only-the-root-files)
-- [Fetch only the root files and `.github` and `src` folder](#Fetch-only-the-root-files-and-github-and-src-folder)
-- [Fetch only a single file](#Fetch-only-a-single-file)
-- [Fetch all history for all tags and branches](#Fetch-all-history-for-all-tags-and-branches)
-- [Checkout a different branch](#Checkout-a-different-branch)
-- [Checkout HEAD^](#Checkout-HEAD)
-- [Checkout multiple repos (side by side)](#Checkout-multiple-repos-side-by-side)
-- [Checkout multiple repos (nested)](#Checkout-multiple-repos-nested)
-- [Checkout multiple repos (private)](#Checkout-multiple-repos-private)
-- [Checkout pull request HEAD commit instead of merge commit](#Checkout-pull-request-HEAD-commit-instead-of-merge-commit)
-- [Checkout pull request on closed event](#Checkout-pull-request-on-closed-event)
-- [Push a commit using the built-in token](#Push-a-commit-using-the-built-in-token)
+- [Checkout V5](#checkout-v5)
+  - [What's new](#whats-new)
+- [Checkout V4](#checkout-v4)
+    - [Note](#note)
+- [What's new](#whats-new-1)
+- [Usage](#usage)
+- [Scenarios](#scenarios)
+  - [Fetch only the root files](#fetch-only-the-root-files)
+  - [Fetch only the root files and `.github` and `src` folder](#fetch-only-the-root-files-and-github-and-src-folder)
+  - [Fetch only a single file](#fetch-only-a-single-file)
+  - [Fetch all history for all tags and branches](#fetch-all-history-for-all-tags-and-branches)
+  - [Checkout a different branch](#checkout-a-different-branch)
+  - [Checkout HEAD^](#checkout-head)
+  - [Checkout multiple repos (side by side)](#checkout-multiple-repos-side-by-side)
+  - [Checkout multiple repos (nested)](#checkout-multiple-repos-nested)
+  - [Checkout multiple repos (private)](#checkout-multiple-repos-private)
+  - [Checkout pull request HEAD commit instead of merge commit](#checkout-pull-request-head-commit-instead-of-merge-commit)
+  - [Checkout pull request on closed event](#checkout-pull-request-on-closed-event)
+  - [Push a commit using the built-in token](#push-a-commit-using-the-built-in-token)
+  - [Push a commit to a PR using the built-in token](#push-a-commit-to-a-pr-using-the-built-in-token)
+- [Recommended permissions](#recommended-permissions)
+- [License](#license)
 
 ## Fetch only the root files
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v6
   with:
     sparse-checkout: .
 ```
@@ -156,7 +200,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Fetch only the root files and `.github` and `src` folder
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v6
   with:
     sparse-checkout: |
       .github
@@ -166,7 +210,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Fetch only a single file
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v6
   with:
     sparse-checkout: |
       README.md
@@ -176,7 +220,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Fetch all history for all tags and branches
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v6
   with:
     fetch-depth: 0
 ```
@@ -184,7 +228,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Checkout a different branch
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v6
   with:
     ref: my-branch
 ```
@@ -192,7 +236,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Checkout HEAD^
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v6
   with:
     fetch-depth: 2
 - run: git checkout HEAD^
@@ -202,42 +246,42 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 
 ```yaml
 - name: Checkout
-  uses: actions/checkout@v4
+  uses: actions/checkout@v6
   with:
     path: main
 
 - name: Checkout tools repo
-  uses: actions/checkout@v4
+  uses: actions/checkout@v6
   with:
     repository: my-org/my-tools
     path: my-tools
 ```
-> - If your secondary repository is private you will need to add the option noted in [Checkout multiple repos (private)](#Checkout-multiple-repos-private)
+> - If your secondary repository is private or internal you will need to add the option noted in [Checkout multiple repos (private)](#Checkout-multiple-repos-private)
 
 ## Checkout multiple repos (nested)
 
 ```yaml
 - name: Checkout
-  uses: actions/checkout@v4
+  uses: actions/checkout@v6
 
 - name: Checkout tools repo
-  uses: actions/checkout@v4
+  uses: actions/checkout@v6
   with:
     repository: my-org/my-tools
     path: my-tools
 ```
-> - If your secondary repository is private you will need to add the option noted in [Checkout multiple repos (private)](#Checkout-multiple-repos-private)
+> - If your secondary repository is private or internal you will need to add the option noted in [Checkout multiple repos (private)](#Checkout-multiple-repos-private)
 
 ## Checkout multiple repos (private)
 
 ```yaml
 - name: Checkout
-  uses: actions/checkout@v4
+  uses: actions/checkout@v6
   with:
     path: main
 
 - name: Checkout private tools
-  uses: actions/checkout@v4
+  uses: actions/checkout@v6
   with:
     repository: my-org/my-private-tools
     token: ${{ secrets.GH_PAT }} # `GH_PAT` is a secret that contains your PAT
@@ -250,7 +294,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Checkout pull request HEAD commit instead of merge commit
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v6
   with:
     ref: ${{ github.event.pull_request.head.sha }}
 ```
@@ -266,7 +310,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 ```
 
 ## Push a commit using the built-in token
@@ -277,7 +321,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: |
           date > generated.txt
           # Note: the following account information will not work on GHES
@@ -286,6 +330,41 @@ jobs:
           git add .
           git commit -m "generated"
           git push
+```
+*NOTE:* The user email is `{user.id}+{user.login}@users.noreply.github.com`. See users API: https://api.github.com/users/github-actions%5Bbot%5D
+
+## Push a commit to a PR using the built-in token
+
+In a pull request trigger, `ref` is required as GitHub Actions checks out in detached HEAD mode, meaning it doesn’t check out your branch by default.
+
+```yaml
+on: pull_request
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+      - run: |
+          date > generated.txt
+          # Note: the following account information will not work on GHES
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "generated"
+          git push
+```
+
+*NOTE:* The user email is `{user.id}+{user.login}@users.noreply.github.com`. See users API: https://api.github.com/users/github-actions%5Bbot%5D
+
+# Recommended permissions
+
+When using the `checkout` action in your GitHub Actions workflow, it is recommended to set the following `GITHUB_TOKEN` permissions to ensure proper functionality, unless alternative auth is provided via the `token` or `ssh-key` inputs:
+
+```yaml
+permissions:
+  contents: read
 ```
 
 # License

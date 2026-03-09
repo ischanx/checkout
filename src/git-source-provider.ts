@@ -159,7 +159,6 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
     const fetchOptions: {
       filter?: string
       fetchDepth?: number
-      fetchTags?: boolean
       showProgress?: boolean
     } = {}
 
@@ -182,12 +181,35 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
       if (!(await refHelper.testRef(git, settings.ref, settings.commit))) {
         refSpec = refHelper.getRefSpec(settings.ref, settings.commit)
         await git.fetch(refSpec, fetchOptions)
+
+        // Verify the ref now matches. For branches, the targeted fetch above brings
+        // in the specific commit. For tags (fetched by ref), this will fail if
+        // the tag was moved after the workflow was triggered.
+        if (!(await refHelper.testRef(git, settings.ref, settings.commit))) {
+          throw new Error(
+            `The ref '${settings.ref}' does not point to the expected commit '${settings.commit}'. ` +
+              `The ref may have been updated after the workflow was triggered.`
+          )
+        }
       }
     } else {
       fetchOptions.fetchDepth = settings.fetchDepth
-      fetchOptions.fetchTags = settings.fetchTags
-      const refSpec = refHelper.getRefSpec(settings.ref, settings.commit)
+      const refSpec = refHelper.getRefSpec(
+        settings.ref,
+        settings.commit,
+        settings.fetchTags
+      )
       await git.fetch(refSpec, fetchOptions)
+
+      // For tags, verify the ref still points to the expected commit.
+      // Tags are fetched by ref (not commit), so if a tag was moved after the
+      // workflow was triggered, we would silently check out the wrong commit.
+      if (!(await refHelper.testRef(git, settings.ref, settings.commit))) {
+        throw new Error(
+          `The ref '${settings.ref}' does not point to the expected commit '${settings.commit}'. ` +
+            `The ref may have been updated after the workflow was triggered.`
+        )
+      }
     }
     core.endGroup()
 
@@ -261,7 +283,8 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
     const commitInfo = await git.log1()
 
     // Log commit sha
-    await git.log1("--format='%H'")
+    const commitSHA = await git.log1('--format=%H')
+    core.setOutput('commit', commitSHA.trim())
 
     // Check for incorrect pull request merge commit
     await refHelper.checkCommitInfo(

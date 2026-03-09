@@ -18,8 +18,8 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20.x
-      - uses: actions/checkout@v4.1.6
+          node-version: 24.x
+      - uses: actions/checkout@v6
       - run: npm ci
       - run: npm run build
       - run: npm run format-check
@@ -37,7 +37,7 @@ jobs:
     steps:
       # Clone this repo
       - name: Checkout
-        uses: actions/checkout@v4.1.6
+        uses: actions/checkout@v6
 
       # Basic checkout
       - name: Checkout basic
@@ -91,6 +91,17 @@ jobs:
 
       - name: Verify fetch filter
         run: __test__/verify-fetch-filter.sh
+
+      # Fetch tags
+      - name: Checkout with fetch-tags
+        uses: ./
+        with:
+          ref: test-data/v2/basic
+          path: fetch-tags-test
+          fetch-tags: true
+      - name: Verify fetch-tags
+        shell: bash
+        run: __test__/verify-fetch-tags.sh
 
       # Sparse checkout
       - name: Sparse checkout
@@ -176,6 +187,22 @@ jobs:
       - name: Verify submodules recursive
         run: __test__/verify-submodules-recursive.sh
 
+      # Worktree credentials
+      - name: Checkout for worktree test
+        uses: ./
+        with:
+          path: worktree-test
+      - name: Verify worktree credentials
+        shell: bash
+        run: __test__/verify-worktree.sh worktree-test worktree-branch
+
+      # Worktree credentials in container step
+      - name: Verify worktree credentials in container step
+        if: runner.os == 'Linux'
+        uses: docker://bitnami/git:latest
+        with:
+          args: bash __test__/verify-worktree.sh worktree-test container-worktree-branch
+
       # Basic checkout using REST API
       - name: Remove basic
         if: runner.os != 'windows'
@@ -214,7 +241,7 @@ jobs:
     steps:
       # Clone this repo
       - name: Checkout
-        uses: actions/checkout@v4.1.6
+        uses: actions/checkout@v6
 
       # Basic checkout using git
       - name: Checkout basic
@@ -248,7 +275,7 @@ jobs:
     steps:
       # Clone this repo
       - name: Checkout
-        uses: actions/checkout@v4.1.6
+        uses: actions/checkout@v6
 
       # Basic checkout using git
       - name: Checkout basic
@@ -280,7 +307,7 @@ jobs:
     steps:
       # Clone this repo
       - name: Checkout
-        uses: actions/checkout@v4.1.6
+        uses: actions/checkout@v6
         with:
           path: localClone
 
@@ -308,7 +335,40 @@ jobs:
           git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
 
       # needed to make checkout post cleanup succeed
-      - name: Fix Checkout v4
-        uses: actions/checkout@v4.1.6
+      - name: Fix Checkout v6
+        uses: actions/checkout@v6
         with:
           path: localClone
+
+  test-output:
+    runs-on: ubuntu-latest
+    steps:
+      # Clone this repo
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          path: actions-checkout
+
+      # Basic checkout using git
+      - name: Checkout basic
+        id: checkout
+        uses: ./actions-checkout
+        with:
+          path: cloned-using-local-action
+          ref: test-data/v2/basic
+
+      # Verify output
+      - name: Verify output
+        run: |
+          echo "Commit: ${{ steps.checkout.outputs.commit }}"
+          echo "Ref: ${{ steps.checkout.outputs.ref }}"
+
+          if [ "${{ steps.checkout.outputs.ref }}" != "test-data/v2/basic" ]; then
+            echo "Expected ref to be test-data/v2/basic"
+            exit 1
+          fi
+
+          if [ "${{ steps.checkout.outputs.commit }}" != "82f71901cf8c021332310dcc8cdba84c4193ff5d" ]; then
+            echo "Expected commit to be 82f71901cf8c021332310dcc8cdba84c4193ff5d"
+            exit 1
+          fi

@@ -1,5 +1,45 @@
 # Changelog
 
+## v6.0.2
+* Fix tag handling: preserve annotations and explicit fetch-tags by @ericsciple in https://github.com/actions/checkout/pull/2356
+
+## v6.0.1
+* Add worktree support for persist-credentials includeIf by @ericsciple in https://github.com/actions/checkout/pull/2327
+
+## v6.0.0
+* Persist creds to a separate file by @ericsciple in https://github.com/actions/checkout/pull/2286
+* Update README to include Node.js 24 support details and requirements by @salmanmkc in https://github.com/actions/checkout/pull/2248
+
+## v5.0.1
+* Port v6 cleanup to v5 by @ericsciple in https://github.com/actions/checkout/pull/2301
+
+## v5.0.0
+* Update actions checkout to use node 24 by @salmanmkc in https://github.com/actions/checkout/pull/2226
+
+## v4.3.1
+* Port v6 cleanup to v4 by @ericsciple in https://github.com/actions/checkout/pull/2305
+
+## v4.3.0
+* docs: update README.md by @motss in https://github.com/actions/checkout/pull/1971
+* Add internal repos for checking out multiple repositories by @mouismail in https://github.com/actions/checkout/pull/1977
+* Documentation update - add recommended permissions to Readme by @benwells in https://github.com/actions/checkout/pull/2043
+* Adjust positioning of user email note and permissions heading by @joshmgross in https://github.com/actions/checkout/pull/2044
+* Update README.md by @nebuk89 in https://github.com/actions/checkout/pull/2194
+* Update CODEOWNERS for actions by @TingluoHuang in https://github.com/actions/checkout/pull/2224
+* Update package dependencies by @salmanmkc in https://github.com/actions/checkout/pull/2236
+
+## v4.2.2
+* `url-helper.ts` now leverages well-known environment variables by @jww3 in https://github.com/actions/checkout/pull/1941
+* Expand unit test coverage for `isGhes` by @jww3 in https://github.com/actions/checkout/pull/1946
+
+## v4.2.1
+* Check out other refs/* by commit if provided, fall back to ref by @orhantoy in https://github.com/actions/checkout/pull/1924
+
+## v4.2.0
+
+* Add Ref and Commit outputs by @lucacome in https://github.com/actions/checkout/pull/1180
+* Dependency updates by @dependabot- https://github.com/actions/checkout/pull/1777, https://github.com/actions/checkout/pull/1872
+
 ## v4.1.7
 * Bump the minor-npm-dependencies group across 1 directory with 4 updates by @dependabot in https://github.com/actions/checkout/pull/1739
 * Bump actions/checkout from 3 to 4 by @dependabot in https://github.com/actions/checkout/pull/1697

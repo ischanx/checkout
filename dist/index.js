@@ -30,7 +30,9 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.fileExistsSync = exports.existsSync = exports.directoryExistsSync = void 0;
+exports.directoryExistsSync = directoryExistsSync;
+exports.existsSync = existsSync;
+exports.fileExistsSync = fileExistsSync;
 const fs = __importStar(__nccwpck_require__(7147));
 function directoryExistsSync(path, required) {
     var _a;
@@ -58,7 +60,6 @@ function directoryExistsSync(path, required) {
     }
     throw new Error(`Directory '${path}' does not exist`);
 }
-exports.directoryExistsSync = directoryExistsSync;
 function existsSync(path) {
     var _a;
     if (!path) {
@@ -75,7 +76,6 @@ function existsSync(path) {
     }
     return true;
 }
-exports.existsSync = existsSync;
 function fileExistsSync(path) {
     var _a;
     if (!path) {
@@ -96,7 +96,6 @@ function fileExistsSync(path) {
     }
     return false;
 }
-exports.fileExistsSync = fileExistsSync;
 
 
 /***/ }),
@@ -139,7 +138,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createAuthHelper = void 0;
+exports.createAuthHelper = createAuthHelper;
 const assert = __importStar(__nccwpck_require__(9491));
 const core = __importStar(__nccwpck_require__(2186));
 const exec = __importStar(__nccwpck_require__(1514));
@@ -156,7 +155,6 @@ const SSH_COMMAND_KEY = 'core.sshCommand';
 function createAuthHelper(git, settings) {
     return new GitAuthHelper(git, settings);
 }
-exports.createAuthHelper = createAuthHelper;
 class GitAuthHelper {
     constructor(gitCommandManager, gitSourceSettings) {
         this.insteadOfValues = [];
@@ -164,6 +162,7 @@ class GitAuthHelper {
         this.sshKeyPath = '';
         this.sshKnownHostsPath = '';
         this.temporaryHomePath = '';
+        this.credentialsConfigPath = ''; // Path to separate credentials config file in RUNNER_TEMP
         this.git = gitCommandManager;
         this.settings = gitSourceSettings || {};
         // Token auth header
@@ -232,15 +231,17 @@ class GitAuthHelper {
     configureGlobalAuth() {
         return __awaiter(this, void 0, void 0, function* () {
             // 'configureTempGlobalConfig' noops if already set, just returns the path
-            const newGitConfigPath = yield this.configureTempGlobalConfig();
+            yield this.configureTempGlobalConfig();
             try {
                 // Configure the token
-                yield this.configureToken(newGitConfigPath, true);
+                yield this.configureToken(true);
                 // Configure HTTPS instead of SSH
                 yield this.git.tryConfigUnset(this.insteadOfKey, true);
                 if (!this.settings.sshKey) {
                     for (const insteadOfValue of this.insteadOfValues) {
-                        yield this.git.config(this.insteadOfKey, insteadOfValue, true, true);
+                        yield this.git.config(this.insteadOfKey, insteadOfValue, true, // globalConfig?
+                        true // add?
+                        );
                     }
                 }
             }
@@ -255,19 +256,34 @@ class GitAuthHelper {
     configureSubmoduleAuth() {
         return __awaiter(this, void 0, void 0, function* () {
             // Remove possible previous HTTPS instead of SSH
-            yield this.removeGitConfig(this.insteadOfKey, true);
+            yield this.removeSubmoduleGitConfig(this.insteadOfKey);
             if (this.settings.persistCredentials) {
-                // Configure a placeholder value. This approach avoids the credential being captured
-                // by process creation audit events, which are commonly logged. For more information,
-                // refer to https://docs.microsoft.com/en-us/windows-server/identity/ad-ds/manage/component-updates/command-line-process-auditing
-                const output = yield this.git.submoduleForeach(
-                // wrap the pipeline in quotes to make sure it's handled properly by submoduleForeach, rather than just the first part of the pipeline
-                `sh -c "git config --local '${this.tokenConfigKey}' '${this.tokenPlaceholderConfigValue}' && git config --local --show-origin --name-only --get-regexp remote.origin.url"`, this.settings.nestedSubmodules);
-                // Replace the placeholder
-                const configPaths = output.match(/(?<=(^|\n)file:)[^\t]+(?=\tremote\.origin\.url)/g) || [];
+                // Get the credentials config file path in RUNNER_TEMP
+                const credentialsConfigPath = this.getCredentialsConfigPath();
+                // Container credentials config path
+                const containerCredentialsPath = path.posix.join('/github/runner_temp', path.basename(credentialsConfigPath));
+                // Get submodule config file paths.
+                const configPaths = yield this.git.getSubmoduleConfigPaths(this.settings.nestedSubmodules);
+                // For each submodule, configure includeIf entries pointing to the shared credentials file.
+                // Configure both host and container paths to support Docker container actions.
                 for (const configPath of configPaths) {
-                    core.debug(`Replacing token placeholder in '${configPath}'`);
-                    yield this.replaceTokenPlaceholder(configPath);
+                    // Submodule Git directory
+                    let submoduleGitDir = path.dirname(configPath); // The config file is at .git/modules/submodule-name/config
+                    submoduleGitDir = submoduleGitDir.replace(/\\/g, '/'); // Use forward slashes, even on Windows
+                    // Configure host includeIf
+                    yield this.git.config(`includeIf.gitdir:${submoduleGitDir}.path`, credentialsConfigPath, false, // globalConfig?
+                    false, // add?
+                    configPath);
+                    // Container submodule git directory
+                    const githubWorkspace = process.env['GITHUB_WORKSPACE'];
+                    assert.ok(githubWorkspace, 'GITHUB_WORKSPACE is not defined');
+                    let relativeSubmoduleGitDir = path.relative(githubWorkspace, submoduleGitDir);
+                    relativeSubmoduleGitDir = relativeSubmoduleGitDir.replace(/\\/g, '/'); // Use forward slashes, even on Windows
+                    const containerSubmoduleGitDir = path.posix.join('/github/workspace', relativeSubmoduleGitDir);
+                    // Configure container includeIf
+                    yield this.git.config(`includeIf.gitdir:${containerSubmoduleGitDir}.path`, containerCredentialsPath, false, // globalConfig?
+                    false, // add?
+                    configPath);
                 }
                 if (this.settings.sshKey) {
                     // Configure core.sshCommand
@@ -298,6 +314,10 @@ class GitAuthHelper {
             }
         });
     }
+    /**
+     * Configures SSH authentication by writing the SSH key and known hosts,
+     * and setting up the GIT_SSH_COMMAND environment variable.
+     */
     configureSsh() {
         return __awaiter(this, void 0, void 0, function* () {
             if (!this.settings.sshKey) {
@@ -354,43 +374,94 @@ class GitAuthHelper {
             }
         });
     }
-    configureToken(configPath, globalConfig) {
+    /**
+     * Configures token-based authentication by creating a credentials config file
+     * and setting up includeIf entries to reference it.
+     * @param globalConfig Whether to configure global config instead of local
+     */
+    configureToken(globalConfig) {
         return __awaiter(this, void 0, void 0, function* () {
-            // Validate args
-            assert.ok((configPath && globalConfig) || (!configPath && !globalConfig), 'Unexpected configureToken parameter combinations');
-            // Default config path
-            if (!configPath && !globalConfig) {
-                configPath = path.join(this.git.getWorkingDirectory(), '.git', 'config');
-            }
-            // Configure a placeholder value. This approach avoids the credential being captured
-            // by process creation audit events, which are commonly logged. For more information,
-            // refer to https://docs.microsoft.com/en-us/windows-server/identity/ad-ds/manage/component-updates/command-line-process-auditing
-            yield this.git.config(this.tokenConfigKey, this.tokenPlaceholderConfigValue, globalConfig);
-            // Replace the placeholder
-            yield this.replaceTokenPlaceholder(configPath || '');
-        });
-    }
-    replaceTokenPlaceholder(configPath) {
-        return __awaiter(this, void 0, void 0, function* () {
-            assert.ok(configPath, 'configPath is not defined');
-            let content = (yield fs.promises.readFile(configPath)).toString();
+            // Get the credentials config file path in RUNNER_TEMP
+            const credentialsConfigPath = this.getCredentialsConfigPath();
+            // Write placeholder to the separate credentials config file using git config.
+            // This approach avoids the credential being captured by process creation audit events,
+            // which are commonly logged. For more information, refer to
+            // https://docs.microsoft.com/en-us/windows-server/identity/ad-ds/manage/component-updates/command-line-process-auditing
+            yield this.git.config(this.tokenConfigKey, this.tokenPlaceholderConfigValue, false, // globalConfig?
+            false, // add?
+            credentialsConfigPath);
+            // Replace the placeholder in the credentials config file
+            let content = (yield fs.promises.readFile(credentialsConfigPath)).toString();
             const placeholderIndex = content.indexOf(this.tokenPlaceholderConfigValue);
             if (placeholderIndex < 0 ||
                 placeholderIndex != content.lastIndexOf(this.tokenPlaceholderConfigValue)) {
-                throw new Error(`Unable to replace auth placeholder in ${configPath}`);
+                throw new Error(`Unable to replace auth placeholder in ${credentialsConfigPath}`);
             }
             assert.ok(this.tokenConfigValue, 'tokenConfigValue is not defined');
             content = content.replace(this.tokenPlaceholderConfigValue, this.tokenConfigValue);
-            yield fs.promises.writeFile(configPath, content);
+            yield fs.promises.writeFile(credentialsConfigPath, content);
+            // Add include or includeIf to reference the credentials config
+            if (globalConfig) {
+                // Global config file is temporary
+                yield this.git.config('include.path', credentialsConfigPath, true // globalConfig?
+                );
+            }
+            else {
+                // Host git directory
+                let gitDir = path.join(this.git.getWorkingDirectory(), '.git');
+                gitDir = gitDir.replace(/\\/g, '/'); // Use forward slashes, even on Windows
+                // Configure host includeIf
+                const hostIncludeKey = `includeIf.gitdir:${gitDir}.path`;
+                yield this.git.config(hostIncludeKey, credentialsConfigPath);
+                // Configure host includeIf for worktrees
+                const hostWorktreeIncludeKey = `includeIf.gitdir:${gitDir}/worktrees/*.path`;
+                yield this.git.config(hostWorktreeIncludeKey, credentialsConfigPath);
+                // Container git directory
+                const workingDirectory = this.git.getWorkingDirectory();
+                const githubWorkspace = process.env['GITHUB_WORKSPACE'];
+                assert.ok(githubWorkspace, 'GITHUB_WORKSPACE is not defined');
+                let relativePath = path.relative(githubWorkspace, workingDirectory);
+                relativePath = relativePath.replace(/\\/g, '/'); // Use forward slashes, even on Windows
+                const containerGitDir = path.posix.join('/github/workspace', relativePath, '.git');
+                // Container credentials config path
+                const containerCredentialsPath = path.posix.join('/github/runner_temp', path.basename(credentialsConfigPath));
+                // Configure container includeIf
+                const containerIncludeKey = `includeIf.gitdir:${containerGitDir}.path`;
+                yield this.git.config(containerIncludeKey, containerCredentialsPath);
+                // Configure container includeIf for worktrees
+                const containerWorktreeIncludeKey = `includeIf.gitdir:${containerGitDir}/worktrees/*.path`;
+                yield this.git.config(containerWorktreeIncludeKey, containerCredentialsPath);
+            }
         });
     }
+    /**
+     * Gets or creates the path to the credentials config file in RUNNER_TEMP.
+     * @returns The absolute path to the credentials config file
+     */
+    getCredentialsConfigPath() {
+        if (this.credentialsConfigPath) {
+            return this.credentialsConfigPath;
+        }
+        const runnerTemp = process.env['RUNNER_TEMP'] || '';
+        assert.ok(runnerTemp, 'RUNNER_TEMP is not defined');
+        // Create a unique filename for this checkout instance
+        const configFileName = `git-credentials-${(0, uuid_1.v4)()}.config`;
+        this.credentialsConfigPath = path.join(runnerTemp, configFileName);
+        core.debug(`Credentials config path: ${this.credentialsConfigPath}`);
+        return this.credentialsConfigPath;
+    }
+    /**
+     * Removes SSH authentication configuration by cleaning up SSH keys,
+     * known hosts files, and SSH command configurations.
+     */
     removeSsh() {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a;
+            var _a, _b;
             // SSH key
             const keyPath = this.sshKeyPath || stateHelper.SshKeyPath;
             if (keyPath) {
                 try {
+                    core.info(`Removing SSH key '${keyPath}'`);
                     yield io.rmRF(keyPath);
                 }
                 catch (err) {
@@ -402,36 +473,135 @@ class GitAuthHelper {
             const knownHostsPath = this.sshKnownHostsPath || stateHelper.SshKnownHostsPath;
             if (knownHostsPath) {
                 try {
+                    core.info(`Removing SSH known hosts '${knownHostsPath}'`);
                     yield io.rmRF(knownHostsPath);
                 }
-                catch (_b) {
-                    // Intentionally empty
+                catch (err) {
+                    core.debug(`${(_b = err === null || err === void 0 ? void 0 : err.message) !== null && _b !== void 0 ? _b : err}`);
+                    core.warning(`Failed to remove SSH known hosts '${knownHostsPath}'`);
                 }
             }
             // SSH command
+            core.info('Removing SSH command configuration');
             yield this.removeGitConfig(SSH_COMMAND_KEY);
+            yield this.removeSubmoduleGitConfig(SSH_COMMAND_KEY);
         });
     }
+    /**
+     * Removes token-based authentication by cleaning up HTTP headers,
+     * includeIf entries, and credentials config files.
+     */
     removeToken() {
         return __awaiter(this, void 0, void 0, function* () {
-            // HTTP extra header
+            var _a;
+            // Remove HTTP extra header
+            core.info('Removing HTTP extra header');
             yield this.removeGitConfig(this.tokenConfigKey);
-        });
-    }
-    removeGitConfig(configKey_1) {
-        return __awaiter(this, arguments, void 0, function* (configKey, submoduleOnly = false) {
-            if (!submoduleOnly) {
-                if ((yield this.git.configExists(configKey)) &&
-                    !(yield this.git.tryConfigUnset(configKey))) {
-                    // Load the config contents
-                    core.warning(`Failed to remove '${configKey}' from the git config`);
+            yield this.removeSubmoduleGitConfig(this.tokenConfigKey);
+            // Collect credentials config paths that need to be removed
+            const credentialsPaths = new Set();
+            // Remove includeIf entries that point to git-credentials-*.config files
+            core.info('Removing includeIf entries pointing to credentials config files');
+            const mainCredentialsPaths = yield this.removeIncludeIfCredentials();
+            mainCredentialsPaths.forEach(path => credentialsPaths.add(path));
+            // Remove submodule includeIf entries that point to git-credentials-*.config files
+            const submoduleConfigPaths = yield this.git.getSubmoduleConfigPaths(true);
+            for (const configPath of submoduleConfigPaths) {
+                const submoduleCredentialsPaths = yield this.removeIncludeIfCredentials(configPath);
+                submoduleCredentialsPaths.forEach(path => credentialsPaths.add(path));
+            }
+            // Remove credentials config files
+            for (const credentialsPath of credentialsPaths) {
+                // Only remove credentials config files if they are under RUNNER_TEMP
+                const runnerTemp = process.env['RUNNER_TEMP'];
+                assert.ok(runnerTemp, 'RUNNER_TEMP is not defined');
+                if (credentialsPath.startsWith(runnerTemp)) {
+                    try {
+                        core.info(`Removing credentials config '${credentialsPath}'`);
+                        yield io.rmRF(credentialsPath);
+                    }
+                    catch (err) {
+                        core.debug(`${(_a = err === null || err === void 0 ? void 0 : err.message) !== null && _a !== void 0 ? _a : err}`);
+                        core.warning(`Failed to remove credentials config '${credentialsPath}'`);
+                    }
+                }
+                else {
+                    core.debug(`Skipping removal of credentials config '${credentialsPath}' - not under RUNNER_TEMP`);
                 }
             }
+        });
+    }
+    /**
+     * Removes a git config key from the local repository config.
+     * @param configKey The git config key to remove
+     */
+    removeGitConfig(configKey) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if ((yield this.git.configExists(configKey)) &&
+                !(yield this.git.tryConfigUnset(configKey))) {
+                // Load the config contents
+                core.warning(`Failed to remove '${configKey}' from the git config`);
+            }
+        });
+    }
+    /**
+     * Removes a git config key from all submodule configs.
+     * @param configKey The git config key to remove
+     */
+    removeSubmoduleGitConfig(configKey) {
+        return __awaiter(this, void 0, void 0, function* () {
             const pattern = regexpHelper.escape(configKey);
             yield this.git.submoduleForeach(
-            // wrap the pipeline in quotes to make sure it's handled properly by submoduleForeach, rather than just the first part of the pipeline
+            // Wrap the pipeline in quotes to make sure it's handled properly by submoduleForeach, rather than just the first part of the pipeline.
             `sh -c "git config --local --name-only --get-regexp '${pattern}' && git config --local --unset-all '${configKey}' || :"`, true);
         });
+    }
+    /**
+     * Removes includeIf entries that point to git-credentials-*.config files.
+     * @param configPath Optional path to a specific git config file to operate on
+     * @returns Array of unique credentials config file paths that were found and removed
+     */
+    removeIncludeIfCredentials(configPath) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const credentialsPaths = new Set();
+            try {
+                // Get all includeIf.gitdir keys
+                const keys = yield this.git.tryGetConfigKeys('^includeIf\\.gitdir:', false, // globalConfig?
+                configPath);
+                for (const key of keys) {
+                    // Get all values for this key
+                    const values = yield this.git.tryGetConfigValues(key, false, // globalConfig?
+                    configPath);
+                    if (values.length > 0) {
+                        // Remove only values that match git-credentials-<uuid>.config pattern
+                        for (const value of values) {
+                            if (this.testCredentialsConfigPath(value)) {
+                                credentialsPaths.add(value);
+                                yield this.git.tryConfigUnsetValue(key, value, false, configPath);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (err) {
+                // Ignore errors - this is cleanup code
+                if (configPath) {
+                    core.debug(`Error during includeIf cleanup for ${configPath}: ${err}`);
+                }
+                else {
+                    core.debug(`Error during includeIf cleanup: ${err}`);
+                }
+            }
+            return Array.from(credentialsPaths);
+        });
+    }
+    /**
+     * Tests if a path matches the git-credentials-*.config pattern.
+     * @param path The path to test
+     * @returns True if the path matches the credentials config pattern
+     */
+    testCredentialsConfigPath(path) {
+        return /git-credentials-[0-9a-f-]+\.config$/i.test(path);
     }
 }
 
@@ -476,14 +646,14 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createCommandManager = exports.MinimumGitSparseCheckoutVersion = exports.MinimumGitVersion = void 0;
+exports.MinimumGitSparseCheckoutVersion = exports.MinimumGitVersion = void 0;
+exports.createCommandManager = createCommandManager;
 const core = __importStar(__nccwpck_require__(2186));
 const exec = __importStar(__nccwpck_require__(1514));
 const fs = __importStar(__nccwpck_require__(7147));
 const fshelper = __importStar(__nccwpck_require__(7219));
 const io = __importStar(__nccwpck_require__(7436));
 const path = __importStar(__nccwpck_require__(1017));
-const refHelper = __importStar(__nccwpck_require__(8601));
 const regexpHelper = __importStar(__nccwpck_require__(3120));
 const retryHelper = __importStar(__nccwpck_require__(2155));
 const git_version_1 = __nccwpck_require__(3142);
@@ -497,7 +667,6 @@ function createCommandManager(workingDirectory, lfs, doSparseCheckout) {
         return yield GitCommandManager.createCommandManager(workingDirectory, lfs, doSparseCheckout);
     });
 }
-exports.createCommandManager = createCommandManager;
 class GitCommandManager {
     // Private constructor; use createCommandManager()
     constructor() {
@@ -630,9 +799,15 @@ class GitCommandManager {
             yield this.execGit(args);
         });
     }
-    config(configKey, configValue, globalConfig, add) {
+    config(configKey, configValue, globalConfig, add, configFile) {
         return __awaiter(this, void 0, void 0, function* () {
-            const args = ['config', globalConfig ? '--global' : '--local'];
+            const args = ['config'];
+            if (configFile) {
+                args.push('--file', configFile);
+            }
+            else {
+                args.push(globalConfig ? '--global' : '--local');
+            }
             if (add) {
                 args.push('--add');
             }
@@ -656,9 +831,9 @@ class GitCommandManager {
     fetch(refSpec, options) {
         return __awaiter(this, void 0, void 0, function* () {
             const args = ['-c', 'protocol.version=2', 'fetch'];
-            if (!refSpec.some(x => x === refHelper.tagsRefSpec) && !options.fetchTags) {
-                args.push('--no-tags');
-            }
+            // Always use --no-tags for explicit control over tag fetching
+            // Tags are fetched explicitly via refspec when needed
+            args.push('--no-tags');
             args.push('--prune', '--no-recurse-submodules');
             if (options.showProgress) {
                 args.push('--progress');
@@ -707,6 +882,16 @@ class GitCommandManager {
                 }
             }
             throw new Error('Unexpected output when retrieving default branch');
+        });
+    }
+    getSubmoduleConfigPaths(recursive) {
+        return __awaiter(this, void 0, void 0, function* () {
+            // Get submodule config file paths.
+            // Use `--show-origin` to get the config file path for each submodule.
+            const output = yield this.submoduleForeach(`git config --local --show-origin --name-only --get-regexp remote.origin.url`, recursive);
+            // Extract config file paths from the output (lines starting with "file:").
+            const configPaths = output.match(/(?<=(^|\n)file:)[^\t]+(?=\tremote\.origin\.url)/g) || [];
+            return configPaths;
         });
     }
     getWorkingDirectory() {
@@ -839,6 +1024,20 @@ class GitCommandManager {
             return output.exitCode === 0;
         });
     }
+    tryConfigUnsetValue(configKey, configValue, globalConfig, configFile) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const args = ['config'];
+            if (configFile) {
+                args.push('--file', configFile);
+            }
+            else {
+                args.push(globalConfig ? '--global' : '--local');
+            }
+            args.push('--unset', configKey, configValue);
+            const output = yield this.execGit(args, true);
+            return output.exitCode === 0;
+        });
+    }
     tryDisableAutomaticGarbageCollection() {
         return __awaiter(this, void 0, void 0, function* () {
             const output = yield this.execGit(['config', '--local', 'gc.auto', '0'], true);
@@ -856,6 +1055,46 @@ class GitCommandManager {
                 return '';
             }
             return stdout;
+        });
+    }
+    tryGetConfigValues(configKey, globalConfig, configFile) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const args = ['config'];
+            if (configFile) {
+                args.push('--file', configFile);
+            }
+            else {
+                args.push(globalConfig ? '--global' : '--local');
+            }
+            args.push('--get-all', configKey);
+            const output = yield this.execGit(args, true);
+            if (output.exitCode !== 0) {
+                return [];
+            }
+            return output.stdout
+                .trim()
+                .split('\n')
+                .filter(value => value.trim());
+        });
+    }
+    tryGetConfigKeys(pattern, globalConfig, configFile) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const args = ['config'];
+            if (configFile) {
+                args.push('--file', configFile);
+            }
+            else {
+                args.push(globalConfig ? '--global' : '--local');
+            }
+            args.push('--name-only', '--get-regexp', pattern);
+            const output = yield this.execGit(args, true);
+            if (output.exitCode !== 0) {
+                return [];
+            }
+            return output.stdout
+                .trim()
+                .split('\n')
+                .filter(key => key.trim());
         });
     }
     tryReset() {
@@ -967,7 +1206,17 @@ class GitCommandManager {
                 }
             }
             // Set the user agent
-            const gitHttpUserAgent = `git/${this.gitVersion} (github-actions-checkout)`;
+            let gitHttpUserAgent = `git/${this.gitVersion} (github-actions-checkout)`;
+            // Append orchestration ID if set
+            const orchId = process.env['ACTIONS_ORCHESTRATION_ID'];
+            if (orchId) {
+                // Sanitize the orchestration ID to ensure it contains only valid characters
+                // Valid characters: 0-9, a-z, _, -, .
+                const sanitizedId = orchId.replace(/[^a-z0-9_.-]/gi, '_');
+                if (sanitizedId) {
+                    gitHttpUserAgent = `${gitHttpUserAgent} actions_orchestration_id/${sanitizedId}`;
+                }
+            }
             core.debug(`Set git useragent to: ${gitHttpUserAgent}`);
             this.gitEnv['GIT_HTTP_USER_AGENT'] = gitHttpUserAgent;
         });
@@ -1021,7 +1270,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.prepareExistingDirectory = void 0;
+exports.prepareExistingDirectory = prepareExistingDirectory;
 const assert = __importStar(__nccwpck_require__(9491));
 const core = __importStar(__nccwpck_require__(2186));
 const fs = __importStar(__nccwpck_require__(7147));
@@ -1125,7 +1374,6 @@ function prepareExistingDirectory(git, repositoryPath, repositoryUrl, clean, ref
         }
     });
 }
-exports.prepareExistingDirectory = prepareExistingDirectory;
 
 
 /***/ }),
@@ -1168,7 +1416,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.cleanup = exports.getSource = void 0;
+exports.getSource = getSource;
+exports.cleanup = cleanup;
 const core = __importStar(__nccwpck_require__(2186));
 const fsHelper = __importStar(__nccwpck_require__(7219));
 const gitAuthHelper = __importStar(__nccwpck_require__(2565));
@@ -1290,13 +1539,26 @@ function getSource(settings) {
                 if (!(yield refHelper.testRef(git, settings.ref, settings.commit))) {
                     refSpec = refHelper.getRefSpec(settings.ref, settings.commit);
                     yield git.fetch(refSpec, fetchOptions);
+                    // Verify the ref now matches. For branches, the targeted fetch above brings
+                    // in the specific commit. For tags (fetched by ref), this will fail if
+                    // the tag was moved after the workflow was triggered.
+                    if (!(yield refHelper.testRef(git, settings.ref, settings.commit))) {
+                        throw new Error(`The ref '${settings.ref}' does not point to the expected commit '${settings.commit}'. ` +
+                            `The ref may have been updated after the workflow was triggered.`);
+                    }
                 }
             }
             else {
                 fetchOptions.fetchDepth = settings.fetchDepth;
-                fetchOptions.fetchTags = settings.fetchTags;
-                const refSpec = refHelper.getRefSpec(settings.ref, settings.commit);
+                const refSpec = refHelper.getRefSpec(settings.ref, settings.commit, settings.fetchTags);
                 yield git.fetch(refSpec, fetchOptions);
+                // For tags, verify the ref still points to the expected commit.
+                // Tags are fetched by ref (not commit), so if a tag was moved after the
+                // workflow was triggered, we would silently check out the wrong commit.
+                if (!(yield refHelper.testRef(git, settings.ref, settings.commit))) {
+                    throw new Error(`The ref '${settings.ref}' does not point to the expected commit '${settings.commit}'. ` +
+                        `The ref may have been updated after the workflow was triggered.`);
+                }
             }
             core.endGroup();
             // Checkout info
@@ -1356,7 +1618,8 @@ function getSource(settings) {
             // Get commit information
             const commitInfo = yield git.log1();
             // Log commit sha
-            yield git.log1("--format='%H'");
+            const commitSHA = yield git.log1('--format=%H');
+            core.setOutput('commit', commitSHA.trim());
             // Check for incorrect pull request merge commit
             yield refHelper.checkCommitInfo(settings.authToken, commitInfo, settings.repositoryOwner, settings.repositoryName, settings.ref, settings.commit, settings.githubServerUrl);
         }
@@ -1373,7 +1636,6 @@ function getSource(settings) {
         }
     });
 }
-exports.getSource = getSource;
 function cleanup(repositoryPath) {
     return __awaiter(this, void 0, void 0, function* () {
         // Repo exists?
@@ -1409,7 +1671,6 @@ function cleanup(repositoryPath) {
         }
     });
 }
-exports.cleanup = cleanup;
 function getGitCommandManager(settings) {
     return __awaiter(this, void 0, void 0, function* () {
         core.info(`Working directory is '${settings.repositoryPath}'`);
@@ -1548,7 +1809,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getDefaultBranch = exports.downloadRepository = void 0;
+exports.downloadRepository = downloadRepository;
+exports.getDefaultBranch = getDefaultBranch;
 const assert = __importStar(__nccwpck_require__(9491));
 const core = __importStar(__nccwpck_require__(2186));
 const fs = __importStar(__nccwpck_require__(7147));
@@ -1612,7 +1874,6 @@ function downloadRepository(authToken, owner, repo, ref, commit, repositoryPath,
         yield io.rmRF(extractPath);
     });
 }
-exports.downloadRepository = downloadRepository;
 /**
  * Looks up the default branch name
  */
@@ -1651,7 +1912,6 @@ function getDefaultBranch(authToken, owner, repo, baseUrl) {
         }));
     });
 }
-exports.getDefaultBranch = getDefaultBranch;
 function downloadArchive(authToken, owner, repo, ref, commit, baseUrl) {
     return __awaiter(this, void 0, void 0, function* () {
         const octokit = github.getOctokit(authToken, {
@@ -1710,7 +1970,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getInputs = void 0;
+exports.getInputs = getInputs;
 const core = __importStar(__nccwpck_require__(2186));
 const fsHelper = __importStar(__nccwpck_require__(7219));
 const github = __importStar(__nccwpck_require__(5438));
@@ -1839,7 +2099,6 @@ function getInputs() {
         return result;
     });
 }
-exports.getInputs = getInputs;
 
 
 /***/ }),
@@ -1898,6 +2157,7 @@ function run() {
                 coreCommand.issueCommand('add-matcher', {}, path.join(__dirname, 'problem-matcher.json'));
                 // Get sources
                 yield gitSourceProvider.getSource(sourceSettings);
+                core.setOutput('ref', sourceSettings.ref);
             }
             finally {
                 // Unregister problem matcher
@@ -1970,7 +2230,12 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.checkCommitInfo = exports.testRef = exports.getRefSpec = exports.getRefSpecForAllHistory = exports.getCheckoutInfo = exports.tagsRefSpec = void 0;
+exports.tagsRefSpec = void 0;
+exports.getCheckoutInfo = getCheckoutInfo;
+exports.getRefSpecForAllHistory = getRefSpecForAllHistory;
+exports.getRefSpec = getRefSpec;
+exports.testRef = testRef;
+exports.checkCommitInfo = checkCommitInfo;
 const core = __importStar(__nccwpck_require__(2186));
 const github = __importStar(__nccwpck_require__(5438));
 const url_helper_1 = __nccwpck_require__(9437);
@@ -2005,8 +2270,8 @@ function getCheckoutInfo(git, ref, commit) {
             result.ref = ref;
         }
         // refs/
-        else if (upperRef.startsWith('REFS/') && commit) {
-            result.ref = commit;
+        else if (upperRef.startsWith('REFS/')) {
+            result.ref = commit ? commit : ref;
         }
         // Unqualified ref, check for a matching branch or tag
         else {
@@ -2024,7 +2289,6 @@ function getCheckoutInfo(git, ref, commit) {
         return result;
     });
 }
-exports.getCheckoutInfo = getCheckoutInfo;
 function getRefSpecForAllHistory(ref, commit) {
     const result = ['+refs/heads/*:refs/remotes/origin/*', exports.tagsRefSpec];
     if (ref && ref.toUpperCase().startsWith('REFS/PULL/')) {
@@ -2033,56 +2297,68 @@ function getRefSpecForAllHistory(ref, commit) {
     }
     return result;
 }
-exports.getRefSpecForAllHistory = getRefSpecForAllHistory;
-function getRefSpec(ref, commit) {
+function getRefSpec(ref, commit, fetchTags) {
     if (!ref && !commit) {
         throw new Error('Args ref and commit cannot both be empty');
     }
     const upperRef = (ref || '').toUpperCase();
+    const result = [];
+    // When fetchTags is true, always include the tags refspec
+    if (fetchTags) {
+        result.push(exports.tagsRefSpec);
+    }
     // SHA
     if (commit) {
         // refs/heads
         if (upperRef.startsWith('REFS/HEADS/')) {
             const branch = ref.substring('refs/heads/'.length);
-            return [`+${commit}:refs/remotes/origin/${branch}`];
+            result.push(`+${commit}:refs/remotes/origin/${branch}`);
         }
         // refs/pull/
         else if (upperRef.startsWith('REFS/PULL/')) {
             const branch = ref.substring('refs/pull/'.length);
-            return [`+${commit}:refs/remotes/pull/${branch}`];
+            result.push(`+${commit}:refs/remotes/pull/${branch}`);
         }
         // refs/tags/
         else if (upperRef.startsWith('REFS/TAGS/')) {
-            return [`+${commit}:${ref}`];
+            if (!fetchTags) {
+                result.push(`+${ref}:${ref}`);
+            }
         }
         // Otherwise no destination ref
         else {
-            return [commit];
+            result.push(commit);
         }
     }
     // Unqualified ref, check for a matching branch or tag
     else if (!upperRef.startsWith('REFS/')) {
-        return [
-            `+refs/heads/${ref}*:refs/remotes/origin/${ref}*`,
-            `+refs/tags/${ref}*:refs/tags/${ref}*`
-        ];
+        result.push(`+refs/heads/${ref}*:refs/remotes/origin/${ref}*`);
+        if (!fetchTags) {
+            result.push(`+refs/tags/${ref}*:refs/tags/${ref}*`);
+        }
     }
     // refs/heads/
     else if (upperRef.startsWith('REFS/HEADS/')) {
         const branch = ref.substring('refs/heads/'.length);
-        return [`+${ref}:refs/remotes/origin/${branch}`];
+        result.push(`+${ref}:refs/remotes/origin/${branch}`);
     }
     // refs/pull/
     else if (upperRef.startsWith('REFS/PULL/')) {
         const branch = ref.substring('refs/pull/'.length);
-        return [`+${ref}:refs/remotes/pull/${branch}`];
+        result.push(`+${ref}:refs/remotes/pull/${branch}`);
     }
     // refs/tags/
-    else {
-        return [`+${ref}:${ref}`];
+    else if (upperRef.startsWith('REFS/TAGS/')) {
+        if (!fetchTags) {
+            result.push(`+${ref}:${ref}`);
+        }
     }
+    // Other refs
+    else {
+        result.push(`+${ref}:${ref}`);
+    }
+    return result;
 }
-exports.getRefSpec = getRefSpec;
 /**
  * Tests whether the initial fetch created the ref at the expected commit
  */
@@ -2117,7 +2393,9 @@ function testRef(git, ref, commit) {
         // refs/tags/
         else if (upperRef.startsWith('REFS/TAGS/')) {
             const tagName = ref.substring('refs/tags/'.length);
-            return ((yield git.tagExists(tagName)) && commit === (yield git.revParse(ref)));
+            // Use ^{commit} to dereference annotated tags to their underlying commit
+            return ((yield git.tagExists(tagName)) &&
+                commit === (yield git.revParse(`${ref}^{commit}`)));
         }
         // Unexpected
         else {
@@ -2126,7 +2404,6 @@ function testRef(git, ref, commit) {
         }
     });
 }
-exports.testRef = testRef;
 function checkCommitInfo(token, commitInfo, repositoryOwner, repositoryName, ref, commit, baseUrl) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a;
@@ -2192,7 +2469,6 @@ function checkCommitInfo(token, commitInfo, repositoryOwner, repositoryName, ref
         }
     });
 }
-exports.checkCommitInfo = checkCommitInfo;
 function fromPayload(path) {
     return select(github.context.payload, path);
 }
@@ -2217,13 +2493,12 @@ function select(obj, path) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.escape = void 0;
+exports.escape = escape;
 function escape(value) {
     return value.replace(/[^a-zA-Z0-9_]/g, x => {
         return `\\${x}`;
     });
 }
-exports.escape = escape;
 
 
 /***/ }),
@@ -2266,7 +2541,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.execute = exports.RetryHelper = void 0;
+exports.RetryHelper = void 0;
+exports.execute = execute;
 const core = __importStar(__nccwpck_require__(2186));
 const defaultMaxAttempts = 3;
 const defaultMinSeconds = 10;
@@ -2318,7 +2594,6 @@ function execute(action) {
         return yield retryHelper.execute(action);
     });
 }
-exports.execute = execute;
 
 
 /***/ }),
@@ -2352,7 +2627,11 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.setSafeDirectory = exports.setSshKnownHostsPath = exports.setSshKeyPath = exports.setRepositoryPath = exports.SshKnownHostsPath = exports.SshKeyPath = exports.PostSetSafeDirectory = exports.RepositoryPath = exports.IsPost = void 0;
+exports.SshKnownHostsPath = exports.SshKeyPath = exports.PostSetSafeDirectory = exports.RepositoryPath = exports.IsPost = void 0;
+exports.setRepositoryPath = setRepositoryPath;
+exports.setSshKeyPath = setSshKeyPath;
+exports.setSshKnownHostsPath = setSshKnownHostsPath;
+exports.setSafeDirectory = setSafeDirectory;
 const core = __importStar(__nccwpck_require__(2186));
 /**
  * Indicates whether the POST action is running
@@ -2380,28 +2659,24 @@ exports.SshKnownHostsPath = core.getState('sshKnownHostsPath');
 function setRepositoryPath(repositoryPath) {
     core.saveState('repositoryPath', repositoryPath);
 }
-exports.setRepositoryPath = setRepositoryPath;
 /**
  * Save the SSH key path so the POST action can retrieve the value.
  */
 function setSshKeyPath(sshKeyPath) {
     core.saveState('sshKeyPath', sshKeyPath);
 }
-exports.setSshKeyPath = setSshKeyPath;
 /**
  * Save the SSH known hosts path so the POST action can retrieve the value.
  */
 function setSshKnownHostsPath(sshKnownHostsPath) {
     core.saveState('sshKnownHostsPath', sshKnownHostsPath);
 }
-exports.setSshKnownHostsPath = setSshKnownHostsPath;
 /**
  * Save the set-safe-directory input so the POST action can retrieve the value.
  */
 function setSafeDirectory() {
     core.saveState('setSafeDirectory', 'true');
 }
-exports.setSafeDirectory = setSafeDirectory;
 // Publish a variable so that when the POST action runs, it can determine it should run the cleanup logic.
 // This is necessary since we don't have a separate entry point.
 if (!exports.IsPost) {
@@ -2440,7 +2715,11 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.isGhes = exports.getServerApiUrl = exports.getBaseUrl = exports.getServerUrl = exports.getFetchUrl = void 0;
+exports.getFetchUrl = getFetchUrl;
+exports.getServerUrl = getServerUrl;
+exports.getBaseUrl = getBaseUrl;
+exports.getServerApiUrl = getServerApiUrl;
+exports.isGhes = isGhes;
 const assert = __importStar(__nccwpck_require__(9491));
 const url_1 = __nccwpck_require__(7310);
 function getFetchUrl(settings) {
@@ -2457,32 +2736,55 @@ function getFetchUrl(settings) {
     const baseURL = getBaseUrl(serviceUrl);
     return `${baseURL}/${encodedOwner}/${encodedName}`;
 }
-exports.getFetchUrl = getFetchUrl;
 function getServerUrl(url) {
-    const urlValue = url && url.trim().length > 0
-        ? url
-        : process.env['GITHUB_SERVER_URL'] || 'https://github.com';
-    return new url_1.URL(urlValue);
+    let resolvedUrl = process.env['GITHUB_SERVER_URL'] || 'https://github.com';
+    if (hasContent(url, WhitespaceMode.Trim)) {
+        resolvedUrl = url;
+    }
+    return new url_1.URL(resolvedUrl);
 }
-exports.getServerUrl = getServerUrl;
 function getBaseUrl(u) {
     return u.protocol + '//' + u.host + u.pathname.replace(/\/+$/g, '');
 }
-exports.getBaseUrl = getBaseUrl;
 function getServerApiUrl(url) {
-    let apiUrl = 'https://api.github.com';
-    if (isGhes(url)) {
-        const serverUrl = getServerUrl(url);
-        apiUrl = new url_1.URL(`${serverUrl.origin}/api/v3`).toString();
+    if (hasContent(url, WhitespaceMode.Trim)) {
+        let serverUrl = getServerUrl(url);
+        if (isGhes(url)) {
+            serverUrl.pathname = 'api/v3';
+        }
+        else {
+            serverUrl.hostname = 'api.' + serverUrl.hostname;
+        }
+        return pruneSuffix(serverUrl.toString(), '/');
     }
-    return apiUrl;
+    return process.env['GITHUB_API_URL'] || 'https://api.github.com';
 }
-exports.getServerApiUrl = getServerApiUrl;
 function isGhes(url) {
-    const ghUrl = getServerUrl(url);
-    return ghUrl.hostname.toUpperCase() !== 'GITHUB.COM';
+    const ghUrl = new url_1.URL(url || process.env['GITHUB_SERVER_URL'] || 'https://github.com');
+    const hostname = ghUrl.hostname.trimEnd().toUpperCase();
+    const isGitHubHost = hostname === 'GITHUB.COM';
+    const isGitHubEnterpriseCloudHost = hostname.endsWith('.GHE.COM');
+    const isLocalHost = hostname.endsWith('.LOCALHOST');
+    return !isGitHubHost && !isGitHubEnterpriseCloudHost && !isLocalHost;
 }
-exports.isGhes = isGhes;
+function pruneSuffix(text, suffix) {
+    if (hasContent(suffix, WhitespaceMode.Preserve) && (text === null || text === void 0 ? void 0 : text.endsWith(suffix))) {
+        return text.substring(0, text.length - suffix.length);
+    }
+    return text;
+}
+var WhitespaceMode;
+(function (WhitespaceMode) {
+    WhitespaceMode[WhitespaceMode["Trim"] = 0] = "Trim";
+    WhitespaceMode[WhitespaceMode["Preserve"] = 1] = "Preserve";
+})(WhitespaceMode || (WhitespaceMode = {}));
+function hasContent(text, whitespaceMode) {
+    let refinedText = text !== null && text !== void 0 ? text : '';
+    if (whitespaceMode == WhitespaceMode.Trim) {
+        refinedText = refinedText.trim();
+    }
+    return refinedText.length > 0;
+}
 
 
 /***/ }),
@@ -2525,7 +2827,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getOrganizationId = void 0;
+exports.getOrganizationId = getOrganizationId;
 const core = __importStar(__nccwpck_require__(2186));
 const fs = __importStar(__nccwpck_require__(7147));
 /**
@@ -2554,7 +2856,6 @@ function getOrganizationId() {
         }
     });
 }
-exports.getOrganizationId = getOrganizationId;
 
 
 /***/ }),
@@ -7787,7 +8088,7 @@ module.exports = __toCommonJS(dist_src_exports);
 var import_universal_user_agent = __nccwpck_require__(5030);
 
 // pkg/dist-src/version.js
-var VERSION = "9.0.5";
+var VERSION = "9.0.6";
 
 // pkg/dist-src/defaults.js
 var userAgent = `octokit-endpoint.js/${VERSION} ${(0, import_universal_user_agent.getUserAgent)()}`;
@@ -7892,9 +8193,9 @@ function addQueryParameters(url, parameters) {
 }
 
 // pkg/dist-src/util/extract-url-variable-names.js
-var urlVariableRegex = /\{[^}]+\}/g;
+var urlVariableRegex = /\{[^{}}]+\}/g;
 function removeNonChars(variableName) {
-  return variableName.replace(/^\W+|\W+$/g, "").split(/,/);
+  return variableName.replace(/(?:^\W+)|(?:(?<!\W)\W+$)/g, "").split(/,/);
 }
 function extractUrlVariableNames(url) {
   const matches = url.match(urlVariableRegex);
@@ -8080,7 +8381,7 @@ function parse(options) {
     }
     if (url.endsWith("/graphql")) {
       if (options.mediaType.previews?.length) {
-        const previewsFromAcceptHeader = headers.accept.match(/[\w-]+(?=-preview)/g) || [];
+        const previewsFromAcceptHeader = headers.accept.match(/(?<![\w-])[\w-]+(?=-preview)/g) || [];
         headers.accept = previewsFromAcceptHeader.concat(options.mediaType.previews).map((preview) => {
           const format = options.mediaType.format ? `.${options.mediaType.format}` : "+json";
           return `application/vnd.github.${preview}-preview${format}`;
@@ -8329,7 +8630,7 @@ __export(dist_src_exports, {
 module.exports = __toCommonJS(dist_src_exports);
 
 // pkg/dist-src/version.js
-var VERSION = "9.2.1";
+var VERSION = "9.2.2";
 
 // pkg/dist-src/normalize-paginated-list-response.js
 function normalizePaginatedListResponse(response) {
@@ -8377,7 +8678,7 @@ function iterator(octokit, route, parameters) {
           const response = await requestMethod({ method, url, headers });
           const normalizedResponse = normalizePaginatedListResponse(response);
           url = ((normalizedResponse.headers.link || "").match(
-            /<([^>]+)>;\s*rel="next"/
+            /<([^<>]+)>;\s*rel="next"/
           ) || [])[1];
           return { value: normalizedResponse };
         } catch (error) {
@@ -10929,7 +11230,7 @@ var RequestError = class extends Error {
     if (options.request.headers.authorization) {
       requestCopy.headers = Object.assign({}, options.request.headers, {
         authorization: options.request.headers.authorization.replace(
-          / .*$/,
+          /(?<! ) .*$/,
           " [REDACTED]"
         )
       });
@@ -10997,7 +11298,7 @@ var import_endpoint = __nccwpck_require__(9440);
 var import_universal_user_agent = __nccwpck_require__(5030);
 
 // pkg/dist-src/version.js
-var VERSION = "8.4.0";
+var VERSION = "8.4.1";
 
 // pkg/dist-src/is-plain-object.js
 function isPlainObject(value) {
@@ -11056,7 +11357,7 @@ function fetchWrapper(requestOptions) {
       headers[keyAndValue[0]] = keyAndValue[1];
     }
     if ("deprecation" in headers) {
-      const matches = headers.link && headers.link.match(/<([^>]+)>; rel="deprecation"/);
+      const matches = headers.link && headers.link.match(/<([^<>]+)>; rel="deprecation"/);
       const deprecationLink = matches && matches.pop();
       log.warn(
         `[@octokit/request] "${requestOptions.method} ${requestOptions.url}" is deprecated. It is scheduled to be removed on ${headers.sunset}${deprecationLink ? `. See ${deprecationLink}` : ""}`
@@ -18710,7 +19011,7 @@ module.exports = {
 
 
 const { parseSetCookie } = __nccwpck_require__(4408)
-const { stringify, getHeadersList } = __nccwpck_require__(3121)
+const { stringify } = __nccwpck_require__(3121)
 const { webidl } = __nccwpck_require__(1744)
 const { Headers } = __nccwpck_require__(554)
 
@@ -18786,14 +19087,13 @@ function getSetCookies (headers) {
 
   webidl.brandCheck(headers, Headers, { strict: false })
 
-  const cookies = getHeadersList(headers).cookies
+  const cookies = headers.getSetCookie()
 
   if (!cookies) {
     return []
   }
 
-  // In older versions of undici, cookies is a list of name:value.
-  return cookies.map((pair) => parseSetCookie(Array.isArray(pair) ? pair[1] : pair))
+  return cookies.map((pair) => parseSetCookie(pair))
 }
 
 /**
@@ -19221,14 +19521,15 @@ module.exports = {
 /***/ }),
 
 /***/ 3121:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+/***/ ((module) => {
 
 "use strict";
 
 
-const assert = __nccwpck_require__(9491)
-const { kHeadersList } = __nccwpck_require__(2785)
-
+/**
+ * @param {string} value
+ * @returns {boolean}
+ */
 function isCTLExcludingHtab (value) {
   if (value.length === 0) {
     return false
@@ -19489,31 +19790,13 @@ function stringify (cookie) {
   return out.join('; ')
 }
 
-let kHeadersListNode
-
-function getHeadersList (headers) {
-  if (headers[kHeadersList]) {
-    return headers[kHeadersList]
-  }
-
-  if (!kHeadersListNode) {
-    kHeadersListNode = Object.getOwnPropertySymbols(headers).find(
-      (symbol) => symbol.description === 'headers list'
-    )
-
-    assert(kHeadersListNode, 'Headers cannot be parsed')
-  }
-
-  const headersList = headers[kHeadersListNode]
-  assert(headersList)
-
-  return headersList
-}
-
 module.exports = {
   isCTLExcludingHtab,
-  stringify,
-  getHeadersList
+  validateCookieName,
+  validateCookiePath,
+  validateCookieValue,
+  toIMFDate,
+  stringify
 }
 
 
@@ -21442,6 +21725,14 @@ const { isUint8Array, isArrayBuffer } = __nccwpck_require__(9830)
 const { File: UndiciFile } = __nccwpck_require__(8511)
 const { parseMIMEType, serializeAMimeType } = __nccwpck_require__(685)
 
+let random
+try {
+  const crypto = __nccwpck_require__(6005)
+  random = (max) => crypto.randomInt(0, max)
+} catch {
+  random = (max) => Math.floor(Math.random(max))
+}
+
 let ReadableStream = globalThis.ReadableStream
 
 /** @type {globalThis['File']} */
@@ -21527,7 +21818,7 @@ function extractBody (object, keepalive = false) {
     // Set source to a copy of the bytes held by object.
     source = new Uint8Array(object.buffer.slice(object.byteOffset, object.byteOffset + object.byteLength))
   } else if (util.isFormDataLike(object)) {
-    const boundary = `----formdata-undici-0${`${Math.floor(Math.random() * 1e11)}`.padStart(11, '0')}`
+    const boundary = `----formdata-undici-0${`${random(1e11)}`.padStart(11, '0')}`
     const prefix = `--${boundary}\r\nContent-Disposition: form-data`
 
     /*! formdata-polyfill. MIT License. Jimmy Wärting <https://jimmy.warting.se/opensource> */
@@ -23509,6 +23800,7 @@ const {
   isValidHeaderName,
   isValidHeaderValue
 } = __nccwpck_require__(2538)
+const util = __nccwpck_require__(3837)
 const { webidl } = __nccwpck_require__(1744)
 const assert = __nccwpck_require__(9491)
 
@@ -24062,6 +24354,9 @@ Object.defineProperties(Headers.prototype, {
   [Symbol.toStringTag]: {
     value: 'Headers',
     configurable: true
+  },
+  [util.inspect.custom]: {
+    enumerable: false
   }
 })
 
@@ -33238,6 +33533,20 @@ class Pool extends PoolBase {
       ? { ...options.interceptors }
       : undefined
     this[kFactory] = factory
+
+    this.on('connectionError', (origin, targets, error) => {
+      // If a connection error occurs, we remove the client from the pool,
+      // and emit a connectionError event. They will not be re-used.
+      // Fixes https://github.com/nodejs/undici/issues/3895
+      for (const target of targets) {
+        // Do not use kRemoveClient here, as it will close the client,
+        // but the client cannot be closed in this state.
+        const idx = this[kClients].indexOf(target)
+        if (idx !== -1) {
+          this[kClients].splice(idx, 1)
+        }
+      }
+    })
   }
 
   [kGetDispatcher] () {
@@ -36390,6 +36699,14 @@ module.exports = require("https");
 
 "use strict";
 module.exports = require("net");
+
+/***/ }),
+
+/***/ 6005:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:crypto");
 
 /***/ }),
 
