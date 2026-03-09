@@ -93,13 +93,22 @@ describe('getServerApiUrl tests', () => {
   })
 })
 
-function getSettings(u: string): Pick<IGitSourceSettings, 'repositoryOwner' | 'repositoryName' | 'githubServerUrl' | 'sshKey' | 'sshUser'> {
+function getSettings(
+  u: string
+): Pick<
+  IGitSourceSettings,
+  | 'repositoryOwner'
+  | 'repositoryName'
+  | 'githubServerUrl'
+  | 'sshKey'
+  | 'sshUser'
+> {
   return {
     githubServerUrl: u,
     repositoryOwner: 'some-owner',
     repositoryName: 'some-name',
     sshKey: '',
-    sshUser: '',
+    sshUser: ''
   }
 }
 describe('url-helper tests', () => {

@@ -2,7 +2,16 @@ import * as assert from 'assert'
 import {URL} from 'url'
 import {IGitSourceSettings} from './git-source-settings'
 
-export function getFetchUrl(settings: Pick<IGitSourceSettings, 'repositoryOwner' | 'repositoryName' | 'githubServerUrl' | 'sshKey' | 'sshUser'>): string {
+export function getFetchUrl(
+  settings: Pick<
+    IGitSourceSettings,
+    | 'repositoryOwner'
+    | 'repositoryName'
+    | 'githubServerUrl'
+    | 'sshKey'
+    | 'sshUser'
+  >
+): string {
   assert.ok(
     settings.repositoryOwner,
     'settings.repositoryOwner must be defined'
